@@ -42,8 +42,14 @@ class GPUMemoryManager:
     """
 
     PROFILES: ClassVar[dict[str, ModelMemoryProfile]] = {
-        "faster_whisper_large_v3_int8":   ModelMemoryProfile("faster_whisper_large_v3_int8",   1.5, 1),
-        "faster_whisper_large_v3_fp16":   ModelMemoryProfile("faster_whisper_large_v3_fp16",   3.0, 1),
+        # Keys are built from the configured compute_type, so they must match the
+        # strings faster-whisper actually accepts ("float16", not "fp16") --
+        # otherwise register_loaded() silently records 0 GB for the model.
+        "faster_whisper_large_v3_int8":         ModelMemoryProfile("faster_whisper_large_v3_int8",         1.5, 1),
+        "faster_whisper_large_v3_int8_float16": ModelMemoryProfile("faster_whisper_large_v3_int8_float16", 2.0, 1),
+        "faster_whisper_large_v3_float16":      ModelMemoryProfile("faster_whisper_large_v3_float16",      3.0, 1),
+        "faster_whisper_large_v3_float32":      ModelMemoryProfile("faster_whisper_large_v3_float32",      6.0, 1),
+        "faster_whisper_large_v3_fp16":         ModelMemoryProfile("faster_whisper_large_v3_fp16",         3.0, 1),
         "seamless_m4t_v2_large_fp16":     ModelMemoryProfile("seamless_m4t_v2_large_fp16",     4.5, 1),
         "nllb_200_distilled_1_3b_fp16":   ModelMemoryProfile("nllb_200_distilled_1_3b_fp16",   2.6, 2),
         "silero_vad":                     ModelMemoryProfile("silero_vad",                     0.05, 1),
@@ -113,6 +119,14 @@ class GPUMemoryManager:
     def register_loaded(self, model_name: str, actual_gb: float | None = None) -> None:
         """Record that model_name has been loaded into VRAM."""
         profile = self.PROFILES.get(model_name)
+        if profile is None and actual_gb is None:
+            logger.warning(
+                "No VRAM profile for model -- accounting it as 0 GB. "
+                "Add a PROFILES entry, or the allocation guards will "
+                "under-count this model.",
+                model=model_name,
+                known_profiles=sorted(self.PROFILES),
+            )
         estimated = actual_gb or (profile.estimated_vram_gb if profile else 0.0)
 
         with self._lock:

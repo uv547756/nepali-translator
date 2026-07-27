@@ -242,10 +242,12 @@ class IncrementalTranslationState:
                 )
 
                 if result.translated_text:
-                    self._committed_translation += (
-                        " " + result.translated_text if self._committed_translation
-                        else result.translated_text
-                    )
+                    # Must go through _flush_to_tts, which is what appends to
+                    # _sentence_buffer. Appending only to _committed_translation
+                    # left the buffer empty, so the flush below found nothing and
+                    # the utterance was silently never spoken -- which is every
+                    # utterance short enough that no partial ever fired.
+                    await self._flush_to_tts(result.translated_text)
 
             except Exception as exc:
                 logger.error(

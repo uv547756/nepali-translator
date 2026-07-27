@@ -69,7 +69,7 @@ class ASRConfig(BaseModel):
     engine: Literal["faster_whisper", "whisper_cpp"] = "faster_whisper"
     model: str = "large-v3"
     model_path: str = "models/faster-whisper-large-v3"
-    compute_type: Literal["int8", "float16", "float32"] = "int8"
+    compute_type: Literal["int8", "int8_float16", "float16", "float32"] = "float16"
     device: Literal["cuda", "cpu"] = "cuda"
     language: str = "ne"
     beam_size: int = 5
@@ -84,8 +84,8 @@ class ASRConfig(BaseModel):
     # every subsequent one. Off by default.
     condition_on_previous_text: bool = False
     initial_prompt: str = ""
-    partial_interval_s: float = 1.0
-    stability_window: int = 3
+    partial_interval_s: float = 0.5
+    stability_window: int = 2
 
     # Temperature fallback. Whisper's quality guards work by *retrying* a failed
     # decode at successively higher temperature; with a single scalar there is

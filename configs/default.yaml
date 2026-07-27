@@ -38,7 +38,7 @@ asr:
   engine: faster_whisper
   model: large-v3
   model_path: models/faster-whisper-large-v3
-  compute_type: int8
+  compute_type: float16
   device: cuda
   language: ne
   beam_size: 5
@@ -56,8 +56,8 @@ asr:
   no_speech_threshold: 0.6           # suppresses non-speech hallucination
   repetition_penalty: 1.1
   partial_beam_size: 1               # greedy for throwaway partials
-  partial_interval_s: 1.0
-  stability_window: 3
+  partial_interval_s: 0.5
+  stability_window: 2
 
 translation:
   engine: seamless
