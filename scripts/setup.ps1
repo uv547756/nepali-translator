@@ -55,15 +55,16 @@ try {
     if ($smiOut -match "CUDA Version:\s*(\d+)\.(\d+)") {
         $major = [int]$Matches[1]
         $minor = [int]$Matches[2]
-        $PtIndex = switch ($major) {
-            11 { "https://download.pytorch.org/whl/cu118" }
-            12 {
-                if     ($minor -le 1) { "https://download.pytorch.org/whl/cu121" }
-                elseif ($minor -le 4) { "https://download.pytorch.org/whl/cu124" }
-                else                  { "https://download.pytorch.org/whl/cu126" }
-            }
-            default { "https://download.pytorch.org/whl/cu128" }  # 13.x / 5090
+        if ($major -eq 11) {
+            $PtIndex = "https://download.pytorch.org/whl/cu118"
+        } elseif ($major -eq 12 -and $minor -le 1) {
+            $PtIndex = "https://download.pytorch.org/whl/cu121"
+        } elseif ($major -eq 12 -and $minor -le 4) {
+            $PtIndex = "https://download.pytorch.org/whl/cu124"
+        } elseif ($major -eq 12) {
+            $PtIndex = "https://download.pytorch.org/whl/cu126"
         }
+        # else: major 13+ keeps the cu128 default set above
         Write-Host "    Detected CUDA $major.$minor"
     }
 } catch {
