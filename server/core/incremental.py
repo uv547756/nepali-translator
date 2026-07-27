@@ -222,7 +222,15 @@ class IncrementalTranslationState:
                     self._target_lang,
                     context=context,
                 )
-                self._translation_latencies.append((time.perf_counter() - t0) * 1000)
+                latency_ms = (time.perf_counter() - t0) * 1000
+                self._translation_latencies.append(latency_ms)
+
+                logger.info(
+                    "Translation result",
+                    source=source_chunk,
+                    translated=result.translated_text,
+                    latency_ms=round(latency_ms),
+                )
 
                 if result.translated_text:
                     self._committed_translation += (
@@ -231,7 +239,11 @@ class IncrementalTranslationState:
                     )
 
             except Exception as exc:
-                logger.error("Translation failed in on_final_words", error=str(exc))
+                logger.error(
+                    "Translation failed in on_final_words",
+                    error=str(exc),
+                    exc_info=True,
+                )
 
         # Flush remaining sentence buffer, ignoring boundary — it's end-of-utterance
         remainder = self._sentence_buffer.strip()

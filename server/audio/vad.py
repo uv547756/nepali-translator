@@ -185,6 +185,9 @@ class VADSegmenter:
         self._pre_buf_maxlen = pre_buf_size
         self._pre_buf = deque(maxlen=pre_buf_size)
 
+        # Most recent speech probability, for diagnostics/telemetry.
+        self.last_probability: float = 0.0
+
     def process_chunk(
         self,
         chunk: np.ndarray,
@@ -192,6 +195,7 @@ class VADSegmenter:
     ) -> list[SpeechSegment]:
         """Feed one audio chunk (window_size_samples). Returns 0 or 1 SpeechSegments."""
         prob = self._vad.process_chunk(chunk)
+        self.last_probability = prob
         now_ms = int(time.monotonic() * 1000) - self._session_start_ms
         is_speech = prob >= self._cfg.threshold
         min_silence_samples = int(self._cfg.min_silence_duration_ms / 1000 * 16000)

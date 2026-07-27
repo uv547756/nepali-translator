@@ -180,6 +180,13 @@ class AsyncPipeline:
         self._muted = False
         self._previous_asr_text: str = ""
 
+        # Per-stage counters, surfaced by _stats_coroutine
+        self._stat_audio_chunks = 0
+        self._stat_vad_chunks = 0
+        self._stat_segments = 0
+        self._stat_asr_calls = 0
+        self._stat_max_prob = 0.0
+
     # ── Lifecycle ───────────────────────────────────────────────────────────
 
     async def start(self) -> None:
@@ -188,8 +195,43 @@ class AsyncPipeline:
             asyncio.create_task(self._vad_coroutine(), name=f"vad-{self._session_id[:8]}"),
             asyncio.create_task(self._asr_coroutine(), name=f"asr-{self._session_id[:8]}"),
             asyncio.create_task(self._audio_forwarder(), name=f"fwd-{self._session_id[:8]}"),
+            asyncio.create_task(self._stats_coroutine(), name=f"stat-{self._session_id[:8]}"),
         ]
         logger.info("Pipeline started", session_id=self._session_id)
+
+    async def _stats_coroutine(self) -> None:
+        """Log a periodic pipeline summary so stalls are visible per stage.
+
+        Without this, a pipeline that receives no audio and one whose VAD
+        never crosses threshold look identical from the logs: silent.
+        """
+        prev = None
+        while self._running:
+            await asyncio.sleep(2.0)
+
+            snapshot = (
+                self._stat_audio_chunks,
+                self._stat_vad_chunks,
+                self._stat_segments,
+                self._stat_asr_calls,
+            )
+            if snapshot == prev:
+                continue          # nothing moved; stay quiet
+            prev = snapshot
+
+            logger.info(
+                "Pipeline stats",
+                session_id=self._session_id,
+                audio_chunks_in=self._stat_audio_chunks,
+                vad_chunks=self._stat_vad_chunks,
+                vad_prob_max=round(self._stat_max_prob, 3),
+                vad_threshold=self._config.vad.threshold,
+                in_speech=self._vad_segmenter.is_in_speech,
+                segments=self._stat_segments,
+                asr_calls=self._stat_asr_calls,
+                muted=self._muted,
+            )
+            self._stat_max_prob = 0.0   # reset peak for the next window
 
     async def stop(self) -> None:
         self._running = False
@@ -236,6 +278,7 @@ class AsyncPipeline:
             chunk = audio_f32[i : i + chunk_size]
             if len(chunk) < chunk_size:
                 chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+            self._stat_audio_chunks += 1
             await self._put_dropping_oldest(self._audio_chunk_q, chunk.tobytes())
 
     async def _put_dropping_oldest(
@@ -277,6 +320,13 @@ class AsyncPipeline:
                 self._session_id,
             )
 
+            self._stat_vad_chunks += 1
+            self._stat_max_prob = max(
+                self._stat_max_prob,
+                self._vad_segmenter.last_probability,
+            )
+            self._stat_segments += len(segments)
+
             was_in_speech = in_speech
             in_speech = self._vad_segmenter.is_in_speech
 
@@ -316,6 +366,13 @@ class AsyncPipeline:
             if seg is None:
                 break
 
+            self._stat_asr_calls += 1
+            logger.info(
+                "Speech segment -> ASR",
+                session_id=self._session_id,
+                duration_s=round(len(seg.audio) / 16000, 2),
+            )
+
             t_asr_start = time.perf_counter()
             try:
                 result: ASRResult = await self._bundle.asr.transcribe(
@@ -333,6 +390,14 @@ class AsyncPipeline:
 
             asr_latency_ms = (time.perf_counter() - t_asr_start) * 1000
             self._metrics.record_asr(asr_latency_ms)
+
+            logger.info(
+                "ASR result",
+                session_id=self._session_id,
+                text=result.text,
+                confidence=round(result.confidence, 3),
+                latency_ms=round(asr_latency_ms),
+            )
 
             # Update previous text for next utterance conditioning
             if result.text:
