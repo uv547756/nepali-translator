@@ -136,8 +136,21 @@ async def run_server(config_path: str, host: str | None, port: int | None) -> No
 
     app.include_router(rest_module.router)
 
+    # FastAPI closes the socket silently on a validation failure, which makes
+    # a rejected handshake indistinguishable from a routing miss. Log it.
+    from fastapi.exceptions import WebSocketRequestValidationError
+
+    @app.exception_handler(WebSocketRequestValidationError)
+    async def _ws_validation_failed(
+        websocket: WebSocket,
+        exc: WebSocketRequestValidationError,
+    ) -> None:
+        logger.error("WebSocket handshake rejected by validation", errors=exc.errors())
+        await websocket.close(code=1008)
+
     @app.websocket("/ws/translate")
     async def ws_translate(websocket: WebSocket) -> None:
+        logger.info("ws_translate endpoint entered")
         await handle_translate_stream(websocket, factory)
 
     # Prometheus metrics endpoint
@@ -170,6 +183,15 @@ async def run_server(config_path: str, host: str | None, port: int | None) -> No
 
     srv_host = host or config.server.host
     srv_port = port or config.server.port
+
+    # Route table, so a missing/shadowed WebSocket route is visible at a glance
+    logger.info(
+        "Registered routes",
+        routes=[
+            f"{type(r).__name__}:{getattr(r, 'path', '?')}"
+            for r in app.routes
+        ],
+    )
 
     logger.info("Server ready", host=srv_host, port=srv_port)
 
