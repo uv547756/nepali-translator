@@ -65,18 +65,6 @@ export interface SessionStore {
   reset: () => void;
 }
 
-const initialMetrics: MetricsState = {
-  asr_ms: 0,
-  translation_ms: 0,
-  tts_ms: 0,
-  total_ms: 0,
-  gpu_util_pct: 0,
-  gpu_mem_used_gb: 0,
-  gpu_mem_total_gb: 0,
-  utterances: 0,
-  wps: 0,
-};
-
 export const useSessionStore = create<SessionStore>((set) => ({
   status: 'idle',
   isMuted: false,

@@ -50,7 +50,7 @@ export const App: React.FC = () => {
         else if (s === 'disconnected') store.setStatus('disconnected');
         else if (s === 'error') store.setError('Connection failed');
       },
-      onJsonEvent: (event) => handleServerEvent(event, store, player),
+      onJsonEvent: (event) => handleServerEvent(event, store),
       onBinaryAudio: (buf) => {
         player.push(buf);
         player.resume();
@@ -163,7 +163,6 @@ export const App: React.FC = () => {
 function handleServerEvent(
   event: Record<string, unknown>,
   store: ReturnType<typeof useSessionStore.getState>,
-  player: AudioPlayer,
 ): void {
   const type = event.type as string;
 
