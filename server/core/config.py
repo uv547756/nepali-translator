@@ -171,7 +171,7 @@ class Config(BaseModel):
     @classmethod
     def from_yaml(cls, path: str | Path) -> Config:
         """Load and validate configuration from a YAML file."""
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         return cls.model_validate(raw)
 

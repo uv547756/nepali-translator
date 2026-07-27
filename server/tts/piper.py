@@ -86,7 +86,7 @@ class PiperTTS(TTSEngine):
         # Read sample rate from the model config
         cfg_path = Path(self._config.config_path)
         if cfg_path.exists():
-            with open(cfg_path) as f:
+            with open(cfg_path, encoding="utf-8") as f:
                 cfg_data = json.load(f)
             self._sr = cfg_data.get("audio", {}).get("sample_rate", 22050)
 
