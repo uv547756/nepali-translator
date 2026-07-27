@@ -96,10 +96,30 @@ def test_no_split_short_text():
 
 
 def test_soft_boundary_long_text():
-    text = "I went to the market, but it was closed, so I went home instead and made dinner"
+    # Must exceed _SOFT_SPLIT_THRESHOLD (80) for a soft split to trigger.
+    # The original fixture was 79 chars, so this assertion never actually held.
+    text = (
+        "I went to the market, but it was closed, "
+        "so I went home instead and made dinner for everyone"
+    )
+    assert len(text) >= 80, "fixture must exceed the soft-split threshold"
     sentences, remainder = _split_at_boundary(text)
     assert len(sentences) == 1   # first comma triggers soft split
     assert len(remainder) > 0
+
+
+def test_soft_boundary_not_triggered_below_threshold():
+    text = "a, " + "b" * 60          # comma present, but under the threshold
+    assert len(text) < 80
+    sentences, remainder = _split_at_boundary(text)
+    assert sentences == []
+    assert remainder == text
+
+
+def test_soft_threshold_is_configurable():
+    text = "aaa, bbb"
+    assert _split_at_boundary(text) == ([], text)          # default 80: no split
+    assert _split_at_boundary(text, 5) == (["aaa,"], "bbb")  # lowered: splits
 
 
 def test_multiple_hard_boundaries():

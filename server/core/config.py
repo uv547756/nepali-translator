@@ -26,7 +26,10 @@ class ServerConfig(BaseModel):
     tls: TLSConfig = Field(default_factory=TLSConfig)
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     max_concurrent_sessions: int = 4
-    audio_codec: Literal["pcm", "opus"] = "pcm"
+    # Opus is NOT implemented -- no encode/decode path exists. Restricted to
+    # "pcm" so a config asking for opus fails validation instead of silently
+    # continuing to send raw PCM.
+    audio_codec: Literal["pcm"] = "pcm"
 
 
 class LanguageConfig(BaseModel):
@@ -54,10 +57,12 @@ class VADConfig(BaseModel):
 
 
 class NoiseReductionConfig(BaseModel):
-    enabled: bool = True
+    # Off by default: DeepFilterNet needs a Rust toolchain to build and is
+    # incompatible with torchaudio 2.x, so it silently fell back to passthrough
+    # while logging a warning on every start.
+    enabled: bool = False
     engine: Literal["deepfilter", "rnnoise"] = "deepfilter"
     model_path: str = "models/DeepFilterNet3"
-    attenuation_limit_db: int = 100
 
 
 class ASRConfig(BaseModel):
@@ -131,7 +136,6 @@ class TTSConfig(BaseModel):
 class QueueSizeConfig(BaseModel):
     audio_chunk_maxsize: int = 10
     speech_segment_maxsize: int = 5
-    asr_result_maxsize: int = 5
     tts_audio_maxsize: int = 20
 
 
@@ -154,7 +158,6 @@ class PrometheusConfig(BaseModel):
 class MonitoringConfig(BaseModel):
     prometheus: PrometheusConfig = Field(default_factory=PrometheusConfig)
     latency_window_size: int = 100
-    log_every_n_utterances: int = 10
 
 
 class Config(BaseModel):

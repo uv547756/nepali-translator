@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   translator:
     build:
@@ -23,11 +21,11 @@ services:
 
     volumes:
       # Models directory — download once, persist across container restarts
-      - ./models:/app/models:ro
+      - ../models:/app/models:ro
       # TLS certificates (optional — mount your own)
       # - /etc/letsencrypt/live/your-domain:/etc/translator:ro
       # Override config at runtime
-      - ./configs:/app/configs:ro
+      - ../configs:/app/configs:ro
 
     environment:
       - NVIDIA_VISIBLE_DEVICES=all

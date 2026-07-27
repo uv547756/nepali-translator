@@ -15,6 +15,9 @@ export type StatusHandler = (status: ConnectionStatus) => void;
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+/** A connection must stay open this long to count as healthy and reset backoff. */
+const STABLE_MS = 5000;
+
 export interface TransportOptions {
   url: string;
   onJsonEvent: JSONHandler;
@@ -31,6 +34,7 @@ export class WebSocketTransport {
   private _maxReconnectDelay: number;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _intentionalClose = false;
+  private _openedAt: number | null = null;
   private _options: TransportOptions;
 
   constructor(options: TransportOptions) {
@@ -51,7 +55,7 @@ export class WebSocketTransport {
 
     ws.onopen = () => {
       this.ws = ws;
-      this._reconnectDelay = this._options.reconnectDelayMs ?? 1000;
+      this._openedAt = Date.now();
       this._setStatus('connected');
     };
 
@@ -78,6 +82,18 @@ export class WebSocketTransport {
         this._setStatus('disconnected');
         return;
       }
+
+      // Only treat the connection as healthy — and so reset the backoff — if it
+      // stayed up. A server that accepts and immediately closes would otherwise
+      // reset the delay on every attempt, producing an endless 1s reconnect
+      // storm instead of backing off.
+      const stayedUp =
+        this._openedAt !== null && Date.now() - this._openedAt >= STABLE_MS;
+      if (stayedUp) {
+        this._reconnectDelay = this._options.reconnectDelayMs ?? 1000;
+      }
+      this._openedAt = null;
+
       this._setStatus('disconnected');
       this._scheduleReconnect();
     };

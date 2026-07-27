@@ -3,13 +3,14 @@ FROM node:20-alpine AS client-build
 
 WORKDIR /build/client
 COPY client/package.json client/package.json
-RUN npm install --frozen-lockfile
+RUN npm install
 
 COPY client/ .
 RUN npm run build
 
 # ── Stage 2: Python inference server ───────────────────────────────────────
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# CUDA 12.8 base: 12.1 predates Blackwell (sm_120) and cannot run an RTX 50-series GPU.
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -33,11 +34,10 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 WORKDIR /app
 
-# Install PyTorch with CUDA 12.1
-RUN pip3 install --no-cache-dir \
-    torch==2.3.1+cu121 \
-    torchaudio==2.3.1+cu121 \
-    --index-url https://download.pytorch.org/whl/cu121
+# Unpinned: the +cu121 wheels for a fixed version get rotated out of the
+# index, which broke this build. Let pip resolve the newest for this index.
+RUN pip3 install --no-cache-dir torch torchaudio \
+    --index-url https://download.pytorch.org/whl/cu128
 
 # Install remaining Python dependencies
 COPY server/requirements.txt server/requirements.txt

@@ -9,9 +9,13 @@ Queue topology:
   audio_chunk_q (drop-oldest on full)
     → _vad_coroutine
       → speech_segment_q (block on full)
-        → _asr_coroutine (emits partials + final)
+        → _asr_coroutine (final transcript at end-of-speech)
           → IncrementalTranslationState
             → (translate) → (TTS) → audio_output_q
+
+  _partial_coroutine runs alongside: while VAD reports speech it re-transcribes
+  the ring buffer every asr.partial_interval_s and feeds partials to the same
+  IncrementalTranslationState, so translation starts before end-of-speech.
 
 Each session (WebSocket connection) gets one AsyncPipeline instance.
 All models are shared across sessions via the ComponentBundle.
@@ -173,6 +177,8 @@ class AsyncPipeline:
             target_lang=config.translation.target_lang,
             context_window_chars=config.translation.context_window_chars,
             min_commit_words=config.pipeline.incremental.min_commit_words,
+            max_buffer_chars=config.pipeline.incremental.max_buffer_chars,
+            metrics=metrics,
         )
 
         self._tasks: list[asyncio.Task] = []
@@ -185,6 +191,7 @@ class AsyncPipeline:
         self._stat_vad_chunks = 0
         self._stat_segments = 0
         self._stat_asr_calls = 0
+        self._stat_partials = 0
         self._stat_max_prob = 0.0
 
     # ── Lifecycle ───────────────────────────────────────────────────────────
@@ -196,6 +203,7 @@ class AsyncPipeline:
             asyncio.create_task(self._asr_coroutine(), name=f"asr-{self._session_id[:8]}"),
             asyncio.create_task(self._audio_forwarder(), name=f"fwd-{self._session_id[:8]}"),
             asyncio.create_task(self._stats_coroutine(), name=f"stat-{self._session_id[:8]}"),
+            asyncio.create_task(self._partial_coroutine(), name=f"part-{self._session_id[:8]}"),
         ]
         for task in self._tasks:
             task.add_done_callback(self._on_task_done)
@@ -236,6 +244,7 @@ class AsyncPipeline:
                 self._stat_vad_chunks,
                 self._stat_segments,
                 self._stat_asr_calls,
+                self._stat_partials,
             )
             if snapshot == prev:
                 continue          # nothing moved; stay quiet
@@ -251,6 +260,7 @@ class AsyncPipeline:
                 in_speech=self._vad_segmenter.is_in_speech,
                 segments=self._stat_segments,
                 asr_calls=self._stat_asr_calls,
+                partials=self._stat_partials,
                 muted=self._muted,
             )
             self._stat_max_prob = 0.0   # reset peak for the next window
@@ -375,6 +385,73 @@ class AsyncPipeline:
                         PipelineErrorEvent("vad", "Segment queue full — segment dropped", True, self._session_id)
                     )
 
+    # ── Partial ASR Coroutine ───────────────────────────────────────────────
+
+    async def _partial_coroutine(self) -> None:
+        """Transcribe mid-utterance so translation starts before end-of-speech.
+
+        This is what makes the pipeline incremental. While VAD reports speech,
+        snapshot the audio accumulated so far every partial_interval_s and feed
+        the transcript to IncrementalTranslationState, which commits only words
+        that have been stable across the consensus window and never re-sends
+        text already spoken.
+
+        Without this stage the pipeline still works, but only translates once
+        VAD closes the utterance -- i.e. it waits for a complete sentence.
+        """
+        cfg = self._config.asr
+        interval = cfg.partial_interval_s
+        min_samples = int(0.5 * 16000)   # need ~0.5s before a partial is meaningful
+
+        while self._running:
+            await asyncio.sleep(interval)
+
+            if not self._config.pipeline.incremental.enabled:
+                continue
+            if self._muted or not self._vad_segmenter.is_in_speech:
+                continue
+
+            audio = self._audio_ringbuf.snapshot()
+            if len(audio) < min_samples:
+                continue
+
+            try:
+                result = await self._bundle.asr.transcribe(
+                    audio,
+                    session_id=self._session_id,
+                    previous_text=self._previous_asr_text,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Partial ASR failed",
+                    error=str(exc),
+                    session_id=self._session_id,
+                )
+                continue
+
+            words = result.word_list
+            if not words:
+                continue
+
+            self._stat_partials += 1
+            await self._event_q.put(
+                PartialTranscriptEvent(
+                    text=result.text,
+                    new_words=words,
+                    confidence=result.confidence,
+                    session_id=self._session_id,
+                )
+            )
+
+            try:
+                await self._incremental_state.on_partial_words(words)
+            except Exception as exc:
+                logger.warning(
+                    "Incremental partial translation failed",
+                    error=str(exc),
+                    session_id=self._session_id,
+                )
+
     # ── ASR Coroutine ───────────────────────────────────────────────────────
 
     async def _asr_coroutine(self) -> None:
@@ -425,22 +502,18 @@ class AsyncPipeline:
             if result.text:
                 self._previous_asr_text = result.text
 
-            # Emit partial transcript event
-            partial_words = result.word_list
-            await self._event_q.put(
-                PartialTranscriptEvent(
-                    text=result.text,
-                    new_words=partial_words,
-                    confidence=result.confidence,
-                    session_id=self._session_id,
-                )
-            )
+            # NOTE: no PartialTranscriptEvent here -- this is the *final*
+            # transcript of a closed utterance. Genuine partials are emitted
+            # mid-utterance by _partial_coroutine.
+            final_words = result.word_list
 
             # Drive the incremental translation + TTS state machine
             t_translation_start = time.perf_counter()
+            translated_text = ""
             try:
                 if self._config.pipeline.incremental.enabled:
-                    await self._incremental_state.on_final_words(partial_words)
+                    await self._incremental_state.on_final_words(final_words)
+                    translated_text = self._incremental_state.committed_translation
                 else:
                     # Non-incremental: translate the full utterance at once
                     translation_result = await self._bundle.translator.translate(
@@ -448,12 +521,14 @@ class AsyncPipeline:
                         self._config.translation.source_lang,
                         self._config.translation.target_lang,
                     )
-                    if translation_result.translated_text:
-                        tts_result = await self._bundle.tts.synthesize(
-                            translation_result.translated_text
-                        )
-                        import numpy as _np
-                        int16 = (_np.array(tts_result.audio) * 32767).clip(-32768, 32767).astype(_np.int16)
+                    translated_text = translation_result.translated_text
+                    if translated_text:
+                        t_tts = time.perf_counter()
+                        tts_result = await self._bundle.tts.synthesize(translated_text)
+                        self._metrics.record_tts((time.perf_counter() - t_tts) * 1000)
+                        int16 = (
+                            np.asarray(tts_result.audio) * 32767
+                        ).clip(-32768, 32767).astype(np.int16)
                         await self._audio_output_q.put(int16.tobytes())
                         await self._audio_output_q.put(b"")
 
@@ -467,12 +542,13 @@ class AsyncPipeline:
 
             translation_latency_ms = (time.perf_counter() - t_translation_start) * 1000
             self._metrics.record_translation(translation_latency_ms)
-            self._metrics.record_utterance(len(partial_words))
+            self._metrics.record_utterance(len(final_words))
+            self._metrics.record_e2e(asr_latency_ms + translation_latency_ms)
 
             await self._event_q.put(
                 FinalTranscriptEvent(
                     text=result.text,
-                    translated=self._incremental_state.committed_translation,
+                    translated=translated_text,
                     confidence=result.confidence,
                     session_id=self._session_id,
                     asr_ms=asr_latency_ms,

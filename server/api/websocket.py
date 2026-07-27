@@ -118,45 +118,6 @@ async def handle_translate_stream(
         )
 
 
-async def handle_audio_bytes(
-    websocket: WebSocket,
-    factory: PipelineFactory,
-) -> None:
-    """Separate endpoint for binary-only audio streams (alternative to combined)."""
-    await websocket.accept()
-    session_id = str(uuid4())
-
-    try:
-        pipeline = await factory.create_session(session_id)
-    except RuntimeError as exc:
-        await websocket.close(code=1013)
-        return
-
-    async def send_events() -> None:
-        async for event in pipeline.event_stream():
-            if not _is_connected(websocket):
-                break
-            if isinstance(event, AudioChunkEvent) and event.pcm_bytes:
-                await websocket.send_bytes(event.pcm_bytes)
-            elif not isinstance(event, AudioChunkEvent):
-                await websocket.send_text(json.dumps(event.to_dict()))
-
-    send_task = asyncio.create_task(send_events())
-
-    try:
-        async for data in websocket.iter_bytes():
-            await pipeline.feed_audio(data)
-    except WebSocketDisconnect:
-        pass
-    finally:
-        send_task.cancel()
-        try:
-            await send_task
-        except asyncio.CancelledError:
-            pass
-        await factory.destroy_session(session_id)
-
-
 async def _handle_text_message(
     raw: str,
     pipeline,

@@ -26,7 +26,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import structlog
 
@@ -42,18 +42,21 @@ _SOFT_BOUNDARY = re.compile(r'(?<=[,;:])\s+')
 _SOFT_SPLIT_THRESHOLD = 80
 
 
-def _split_at_boundary(text: str) -> tuple[list[str], str]:
+def _split_at_boundary(
+    text: str,
+    soft_threshold: int = _SOFT_SPLIT_THRESHOLD,
+) -> tuple[list[str], str]:
     """Split text at sentence boundaries.
 
     Returns (complete_sentences, incomplete_remainder).
     Hard boundaries: [.!?] followed by a capital letter or quote.
-    Soft boundaries: [,;:] — only when buffer exceeds threshold.
+    Soft boundaries: [,;:] — only when buffer exceeds soft_threshold.
     """
     parts = _HARD_BOUNDARY.split(text)
     if len(parts) > 1:
         return parts[:-1], parts[-1]
 
-    if len(text) >= _SOFT_SPLIT_THRESHOLD:
+    if len(text) >= soft_threshold:
         parts = _SOFT_BOUNDARY.split(text, maxsplit=1)
         if len(parts) > 1:
             return [parts[0]], parts[1]
@@ -154,6 +157,8 @@ class IncrementalTranslationState:
         target_lang: str = "eng",
         context_window_chars: int = 200,
         min_commit_words: int = 1,
+        max_buffer_chars: int = _SOFT_SPLIT_THRESHOLD,
+        metrics: Any = None,
     ) -> None:
         self._asr_state = asr_state
         self._translator = translator
@@ -163,6 +168,10 @@ class IncrementalTranslationState:
         self._target_lang = target_lang
         self._context_window = context_window_chars
         self._min_commit_words = min_commit_words
+        self._max_buffer_chars = max_buffer_chars
+        # Optional MetricsCollector; TTS/translation happen here rather than in
+        # the pipeline, so without this their latencies are never recorded.
+        self._metrics = metrics
 
         # Accumulated translations for this utterance
         self._committed_translation: str = ""
@@ -277,7 +286,9 @@ class IncrementalTranslationState:
             " " + new_translation if self._sentence_buffer else new_translation
         )
 
-        complete_sentences, self._sentence_buffer = _split_at_boundary(self._sentence_buffer)
+        complete_sentences, self._sentence_buffer = _split_at_boundary(
+            self._sentence_buffer, self._max_buffer_chars
+        )
 
         for sentence in complete_sentences:
             sentence = sentence.strip()
@@ -287,7 +298,10 @@ class IncrementalTranslationState:
             t0 = time.perf_counter()
             try:
                 pcm = await self._tts_synthesize(sentence)
-                self._tts_latencies.append((time.perf_counter() - t0) * 1000)
+                tts_ms = (time.perf_counter() - t0) * 1000
+                self._tts_latencies.append(tts_ms)
+                if self._metrics is not None:
+                    self._metrics.record_tts(tts_ms)
                 await self._audio_q.put(pcm)
                 self._spoken_end_char += len(sentence)
             except Exception as exc:

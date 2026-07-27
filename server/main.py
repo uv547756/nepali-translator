@@ -127,17 +127,38 @@ async def run_server(config_path: str, host: str | None, port: int | None) -> No
 
     rest_module.configure(registry, factory, metrics, models_dir="models")
 
+    # Shutdown via lifespan; @app.on_event is deprecated and warns on every start.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        await metrics.stop_gpu_poller()
+        await registry.unload_all()
+
     # Build FastAPI app
     app = FastAPI(
         title="Nepali Speech Translator",
         version="1.0.0",
         description="Real-time Nepali → English/Hindi speech translation",
+        lifespan=lifespan,
     )
+
+    # allow_credentials=True is invalid alongside a wildcard origin: the spec
+    # forbids Access-Control-Allow-Origin:* on credentialed requests, and
+    # browsers reject them. Only send credentials when origins are explicit.
+    cors_origins = config.server.cors_origins
+    allow_credentials = "*" not in cors_origins
+    if not allow_credentials:
+        logger.warning(
+            "CORS wildcard origin in use -- credentials disabled. "
+            "Set server.cors_origins to explicit origins if you add auth.",
+        )
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=config.server.cors_origins,
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -182,11 +203,6 @@ async def run_server(config_path: str, host: str | None, port: int | None) -> No
                 "docs": "/docs",
                 "status": "/api/v1/status",
             }
-
-    @app.on_event("shutdown")
-    async def on_shutdown():
-        await metrics.stop_gpu_poller()
-        await registry.unload_all()
 
     srv_host = host or config.server.host
     srv_port = port or config.server.port

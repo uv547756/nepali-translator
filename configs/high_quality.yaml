@@ -11,7 +11,7 @@ vad:
   speech_pad_ms: 300
 
 noise_reduction:
-  enabled: true
+  enabled: false
   engine: deepfilter
 
 asr:

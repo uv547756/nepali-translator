@@ -203,10 +203,13 @@ class PiperTTS(TTSEngine):
         assert voice is not None
 
         # Only pass tuning params the installed signature actually accepts.
+        # speaker_id matters for multi-speaker voices; without it the config
+        # field was inert and only speaker 0 was ever reachable.
         optional = {
             "length_scale": self._config.length_scale,
             "noise_scale": self._config.noise_scale,
             "noise_w": self._config.noise_w,
+            "speaker_id": self._config.speaker_id,
         }
 
         # ── piper-tts >= 1.3: synthesize() yields AudioChunk objects ────────

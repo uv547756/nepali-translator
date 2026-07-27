@@ -54,10 +54,38 @@ class ModelRegistry:
         )
         self._bundle: Optional[ComponentBundle] = None
 
+    def _apply_cuda_memory_fraction(self) -> None:
+        """Enforce system.cuda_memory_fraction.
+
+        Declared in config since the start but never applied, so the VRAM cap
+        was purely decorative. Caps this process's share of the device so a
+        runaway allocation cannot starve everything else on the GPU.
+        """
+        fraction = getattr(self._config.system, "cuda_memory_fraction", None)
+        if not fraction or fraction >= 1.0:
+            return
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return
+            torch.cuda.set_per_process_memory_fraction(
+                float(fraction),
+                self._config.system.cuda_device,
+            )
+            logger.info(
+                "CUDA memory fraction applied",
+                fraction=fraction,
+                device=self._config.system.cuda_device,
+            )
+        except Exception as exc:
+            logger.warning("Could not apply cuda_memory_fraction", error=str(exc))
+
     async def load_all(self) -> ComponentBundle:
         """Load all models sequentially. Returns a ComponentBundle."""
         logger.info("Starting model load sequence")
         t_start = time.perf_counter()
+
+        self._apply_cuda_memory_fraction()
 
         # 1. VAD (CPU — fast, load first)
         logger.info("Loading VAD", engine=self._config.vad.engine)

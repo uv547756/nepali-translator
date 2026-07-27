@@ -30,10 +30,9 @@ vad:
   window_size_samples: 512
 
 noise_reduction:
-  enabled: true
+  enabled: false
   engine: deepfilter
   model_path: models/DeepFilterNet3
-  attenuation_limit_db: 100
 
 asr:
   engine: faster_whisper
@@ -84,7 +83,6 @@ pipeline:
   queues:
     audio_chunk_maxsize: 10
     speech_segment_maxsize: 5
-    asr_result_maxsize: 5
     tts_audio_maxsize: 20
 
 monitoring:
@@ -92,4 +90,3 @@ monitoring:
     enabled: true
     port: 9090
   latency_window_size: 100
-  log_every_n_utterances: 10
