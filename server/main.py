@@ -88,7 +88,7 @@ def _parse_args() -> argparse.Namespace:
 async def run_server(config_path: str, host: str | None, port: int | None) -> None:
     """Start the FastAPI + uvicorn server."""
     import uvicorn
-    from fastapi import FastAPI
+    from fastapi import FastAPI, WebSocket
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
 
@@ -137,7 +137,7 @@ async def run_server(config_path: str, host: str | None, port: int | None) -> No
     app.include_router(rest_module.router)
 
     @app.websocket("/ws/translate")
-    async def ws_translate(websocket):
+    async def ws_translate(websocket: WebSocket) -> None:
         await handle_translate_stream(websocket, factory)
 
     # Prometheus metrics endpoint
