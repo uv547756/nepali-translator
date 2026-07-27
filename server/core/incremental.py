@@ -15,8 +15,13 @@ Two cooperating classes:
     synthesized twice.
 
 Together these implement the incremental translation loop:
-  new stable words → translate chunk → append to sentence buffer
-  → split at boundary → push complete sentences to TTS → advance cursor
+  new stable words → re-translate the whole committed prefix
+  → split at boundary → speak only complete, not-yet-spoken sentences
+
+The prefix is re-translated rather than the new fragment alone: an MT model
+given an isolated fragment has no context and will confabulate one. The
+spoken-text cursor is what makes repeated re-translation safe, by ensuring
+nothing is ever spoken twice.
 """
 
 from __future__ import annotations
@@ -142,9 +147,10 @@ class IncrementalTranslationState:
     - After on_final_words() returns, call reset() to prepare for the next utterance.
 
     No-repeat guarantee:
-    - 'spoken_end_char' tracks how many bytes of committed_translation have been
-      pushed to TTS. Every _flush_to_tts() call only processes NEW text beyond
-      this cursor. Prior translations are never re-processed.
+    - '_spoken_text' holds exactly the text already sent to TTS. Each pass
+      considers only the remainder past it, and emits only complete sentences,
+      so a half sentence is never spoken and no sentence is spoken twice --
+      even though re-translation may reword the tail between passes.
     """
 
     def __init__(
@@ -175,7 +181,9 @@ class IncrementalTranslationState:
 
         # Accumulated translations for this utterance
         self._committed_translation: str = ""
-        self._sentence_buffer: str = ""
+        # Text already sent to TTS. Tracked as text, not an index, because
+        # re-translation can reword the tail between passes.
+        self._spoken_text: str = ""
         self._spoken_end_char: int = 0
 
         # Metrics
@@ -185,69 +193,133 @@ class IncrementalTranslationState:
     async def on_partial_words(self, partial_words: list[str]) -> None:
         """Process a new partial transcript from ASR.
 
-        Feeds words to IncrementalASRState, translates newly stable words,
-        and flushes complete sentences to TTS.
+        Re-translates the whole committed prefix and speaks only the complete
+        sentences that have not been spoken yet.
+
+        Why re-translate rather than translate just the newly stable words:
+        an MT model given a bare fragment has no context and will invent one.
+        Feeding SeamlessM4T a lone noun produced confident nonsense of the form
+        "What is the meaning of the name X?". Translating the full prefix costs
+        one extra forward pass per interval and keeps the model in-context;
+        the spoken_end_char cursor is what makes that safe to do repeatedly.
         """
         newly_stable = self._asr_state.update(partial_words)
 
         if len(newly_stable) < self._min_commit_words:
             return
 
-        source_chunk = " ".join(newly_stable)
-        context = self._committed_translation[-self._context_window:]
+        full_source = " ".join(self._asr_state.committed_words).strip()
+        if not full_source:
+            return
 
         t0 = time.perf_counter()
         try:
             result = await self._translator.translate(
-                source_chunk,
+                full_source,
                 self._source_lang,
                 self._target_lang,
-                context=context,
+                context="",
             )
             self._translation_latencies.append((time.perf_counter() - t0) * 1000)
-
-            if result.translated_text:
-                await self._flush_to_tts(result.translated_text)
-
         except Exception as exc:
             logger.error("Translation failed in on_partial_words", error=str(exc))
+            return
+
+        translation = (result.translated_text or "").strip()
+        if not translation:
+            return
+
+        self._committed_translation = translation
+        await self._speak_new_sentences(translation)
+
+    async def _speak_new_sentences(self, translation: str) -> None:
+        """Speak complete sentences in `translation` beyond what was already spoken.
+
+        Re-translation can reword the tail between passes, so the already-spoken
+        prefix is tracked as text rather than an index: only the remainder past
+        it is considered, and only whole sentences are emitted. A half sentence
+        is never spoken, since it may be reworded on the next pass.
+        """
+        if translation.startswith(self._spoken_text):
+            remainder = translation[len(self._spoken_text):]
+        elif len(translation) > len(self._spoken_text):
+            # Prefix was reworded. Do not re-speak; take only the extra tail.
+            remainder = translation[len(self._spoken_text):]
+        else:
+            return
+
+        remainder = remainder.lstrip()
+        if not remainder:
+            return
+
+        complete, _incomplete = _split_at_boundary(remainder, self._max_buffer_chars)
+        for sentence in complete:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            await self._synthesize_and_queue(sentence)
+            self._spoken_text = (
+                f"{self._spoken_text} {sentence}".strip()
+                if self._spoken_text else sentence
+            )
+            self._spoken_end_char = len(self._spoken_text)
+
+    async def _synthesize_and_queue(self, sentence: str) -> None:
+        """Synthesize one sentence and queue its PCM."""
+        t0 = time.perf_counter()
+        try:
+            pcm = await self._tts_synthesize(sentence)
+            tts_ms = (time.perf_counter() - t0) * 1000
+            self._tts_latencies.append(tts_ms)
+            if self._metrics is not None:
+                self._metrics.record_tts(tts_ms)
+            await self._audio_q.put(pcm)
+        except Exception as exc:
+            logger.error("TTS synthesis failed", sentence=sentence[:50], error=str(exc))
 
     async def on_final_words(self, final_words: list[str]) -> None:
         """Process the final definitive transcript at end-of-speech.
 
         Translates any uncommitted suffix and flushes the entire sentence buffer.
         """
-        uncommitted = self._asr_state.finalize(final_words)
+        # finalize() only returns the uncommitted suffix, but the whole
+        # utterance is translated here as one unit: this is the definitive
+        # transcript, and a full-sentence input is what the MT model translates
+        # best. The spoken-text cursor prevents anything being said twice.
+        self._asr_state.finalize(final_words)
 
-        if uncommitted:
-            source_chunk = " ".join(uncommitted)
-            context = self._committed_translation[-self._context_window:]
-
+        full_source = " ".join(final_words).strip()
+        if full_source:
             t0 = time.perf_counter()
             try:
                 result = await self._translator.translate(
-                    source_chunk,
+                    full_source,
                     self._source_lang,
                     self._target_lang,
-                    context=context,
+                    context="",
                 )
                 latency_ms = (time.perf_counter() - t0) * 1000
                 self._translation_latencies.append(latency_ms)
 
                 logger.info(
                     "Translation result",
-                    source=source_chunk,
+                    source=full_source,
                     translated=result.translated_text,
                     latency_ms=round(latency_ms),
                 )
 
-                if result.translated_text:
-                    # Must go through _flush_to_tts, which is what appends to
-                    # _sentence_buffer. Appending only to _committed_translation
-                    # left the buffer empty, so the flush below found nothing and
-                    # the utterance was silently never spoken -- which is every
-                    # utterance short enough that no partial ever fired.
-                    await self._flush_to_tts(result.translated_text)
+                translation = (result.translated_text or "").strip()
+                if translation:
+                    self._committed_translation = translation
+                    # Whole sentences first...
+                    await self._speak_new_sentences(translation)
+                    # ...then whatever tail remains, since end-of-speech means
+                    # no further words are coming to complete it.
+                    tail = translation[len(self._spoken_text):].strip()
+                    if tail:
+                        await self._synthesize_and_queue(tail)
+                        self._spoken_text = translation
+                        self._spoken_end_char = len(translation)
 
             except Exception as exc:
                 logger.error(
@@ -255,18 +327,6 @@ class IncrementalTranslationState:
                     error=str(exc),
                     exc_info=True,
                 )
-
-        # Flush remaining sentence buffer, ignoring boundary — it's end-of-utterance
-        remainder = self._sentence_buffer.strip()
-        if remainder:
-            t0 = time.perf_counter()
-            try:
-                pcm = await self._tts_synthesize(remainder)
-                self._tts_latencies.append((time.perf_counter() - t0) * 1000)
-                await self._audio_q.put(pcm)
-                self._spoken_end_char += len(remainder)
-            except Exception as exc:
-                logger.error("TTS failed for sentence buffer", error=str(exc))
 
         # Signal end of utterance
         await self._audio_q.put(b"")
@@ -279,36 +339,6 @@ class IncrementalTranslationState:
             ),
         )
 
-    async def _flush_to_tts(self, new_translation: str) -> None:
-        """Append new_translation to the sentence buffer and push complete sentences."""
-        self._committed_translation += (
-            " " + new_translation if self._committed_translation else new_translation
-        )
-        self._sentence_buffer += (
-            " " + new_translation if self._sentence_buffer else new_translation
-        )
-
-        complete_sentences, self._sentence_buffer = _split_at_boundary(
-            self._sentence_buffer, self._max_buffer_chars
-        )
-
-        for sentence in complete_sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-
-            t0 = time.perf_counter()
-            try:
-                pcm = await self._tts_synthesize(sentence)
-                tts_ms = (time.perf_counter() - t0) * 1000
-                self._tts_latencies.append(tts_ms)
-                if self._metrics is not None:
-                    self._metrics.record_tts(tts_ms)
-                await self._audio_q.put(pcm)
-                self._spoken_end_char += len(sentence)
-            except Exception as exc:
-                logger.error("TTS synthesis failed", sentence=sentence[:50], error=str(exc))
-
     async def _tts_synthesize(self, text: str) -> bytes:
         """Synthesize text and return Int16 LE PCM bytes."""
         import numpy as np
@@ -320,7 +350,7 @@ class IncrementalTranslationState:
         """Full reset for the next utterance."""
         self._asr_state.reset()
         self._committed_translation = ""
-        self._sentence_buffer = ""
+        self._spoken_text = ""
         self._spoken_end_char = 0
         self._translation_latencies = []
         self._tts_latencies = []

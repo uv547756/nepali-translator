@@ -164,7 +164,7 @@ class QueueSizeConfig(BaseModel):
 
 class IncrementalConfig(BaseModel):
     enabled: bool = True
-    min_commit_words: int = 1
+    min_commit_words: int = 3
     max_buffer_chars: int = 80
 
 

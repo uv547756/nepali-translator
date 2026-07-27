@@ -86,7 +86,7 @@ tts:
 pipeline:
   incremental:
     enabled: true
-    min_commit_words: 1
+    min_commit_words: 3
     max_buffer_chars: 80
   queues:
     audio_chunk_maxsize: 10
