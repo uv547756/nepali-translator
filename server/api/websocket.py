@@ -74,14 +74,34 @@ async def handle_translate_stream(
 
     send_task = asyncio.create_task(send_events(), name=f"ws-send-{session_id[:8]}")
 
-    # Main receive loop: binary = audio PCM, text = JSON control
+    # Main receive loop: binary frames are PCM audio, text frames are JSON control.
+    # Must use the raw receive() rather than iter_text()/iter_bytes(), since those
+    # index message["text"]/["bytes"] unconditionally and raise KeyError on the
+    # other frame type.
     try:
-        async for message in websocket.iter_text():
-            await _handle_text_message(message, pipeline, session_id)
+        while True:
+            message = await websocket.receive()
+
+            if message["type"] == "websocket.disconnect":
+                break
+
+            pcm = message.get("bytes")
+            if pcm is not None:
+                await pipeline.feed_audio(pcm)
+                continue
+
+            text = message.get("text")
+            if text is not None:
+                await _handle_text_message(text, pipeline, session_id)
     except WebSocketDisconnect:
         pass
     except Exception as exc:
-        logger.error("WebSocket receive error", error=str(exc), session_id=session_id)
+        logger.error(
+            "WebSocket receive error",
+            error=str(exc),
+            session_id=session_id,
+            exc_info=True,
+        )
     finally:
         send_task.cancel()
         try:
