@@ -77,10 +77,33 @@ class ASRConfig(BaseModel):
     patience: float = 1.0
     temperature: float = 0.0
     word_timestamps: bool = True
-    condition_on_previous_text: bool = True
+
+    # Feeding the previous (possibly wrong) transcript back into the decoder
+    # propagates errors forward across utterances. Whisper is especially prone
+    # to this on lower-resource languages, where one bad segment can steer
+    # every subsequent one. Off by default.
+    condition_on_previous_text: bool = False
     initial_prompt: str = ""
     partial_interval_s: float = 1.0
     stability_window: int = 3
+
+    # Temperature fallback. Whisper's quality guards work by *retrying* a failed
+    # decode at successively higher temperature; with a single scalar there is
+    # no fallback, so a greedy decode that falls into a repetition loop
+    # ("प्रतान प्रतान प्रतान ...") stays stuck there.
+    temperature_fallback: list[float] = Field(
+        default_factory=lambda: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    )
+    # Detects degenerate/repetitive output and triggers the fallback above.
+    compression_ratio_threshold: float = 2.4
+    # Treat a segment as failed when average log-probability falls below this.
+    log_prob_threshold: float = -1.0
+    # Suppress transcription of segments the model considers non-speech.
+    no_speech_threshold: float = 0.6
+    repetition_penalty: float = 1.1
+    # Greedy decoding for mid-utterance partials: they are re-transcribed every
+    # partial_interval_s and thrown away, so beam search there is wasted GPU.
+    partial_beam_size: int = 1
 
     @model_validator(mode="after")
     def validate_device(self) -> ASRConfig:

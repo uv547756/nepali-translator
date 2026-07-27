@@ -46,8 +46,16 @@ asr:
   patience: 1.0
   temperature: 0.0
   word_timestamps: true
-  condition_on_previous_text: true
+  # Off: feeding a wrong transcript back in propagates errors across utterances
+  condition_on_previous_text: false
   initial_prompt: ""
+  # Anti-hallucination: retry a failed decode at rising temperature.
+  temperature_fallback: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+  compression_ratio_threshold: 2.4   # detects repetition loops
+  log_prob_threshold: -1.0           # detects low-confidence decodes
+  no_speech_threshold: 0.6           # suppresses non-speech hallucination
+  repetition_penalty: 1.1
+  partial_beam_size: 1               # greedy for throwaway partials
   partial_interval_s: 1.0
   stability_window: 3
 

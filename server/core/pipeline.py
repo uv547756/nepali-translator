@@ -430,7 +430,8 @@ class AsyncPipeline:
                 result = await self._bundle.asr.transcribe(
                     audio,
                     session_id=self._session_id,
-                    previous_text=self._previous_asr_text,
+                    previous_text="",   # never condition partials on prior text
+                    is_partial=True,
                 )
             except Exception as exc:
                 logger.warning(

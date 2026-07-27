@@ -60,6 +60,7 @@ class ASREngine(ABC):
         audio: np.ndarray,
         session_id: str = "",
         previous_text: str = "",
+        is_partial: bool = False,
     ) -> ASRResult:
         """Transcribe a complete speech segment.
 

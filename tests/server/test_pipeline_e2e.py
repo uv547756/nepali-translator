@@ -42,7 +42,7 @@ class StubVAD:
 
 class StubASR(ASREngine):
     def load(self) -> None: pass
-    async def transcribe(self, audio, session_id="", previous_text="") -> ASRResult:
+    async def transcribe(self, audio, session_id="", previous_text="", is_partial=False) -> ASRResult:
         return ASRResult(
             text="तपाईं कहाँ जानुहुन्छ",
             is_final=True,

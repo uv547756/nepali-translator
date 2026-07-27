@@ -85,6 +85,7 @@ class FasterWhisperASR(ASREngine):
         audio: np.ndarray,
         session_id: str = "",
         previous_text: str = "",
+        is_partial: bool = False,
     ) -> ASRResult:
         """Transcribe audio in the dedicated executor thread."""
         if not self._loaded or self._model is None:
@@ -98,6 +99,7 @@ class FasterWhisperASR(ASREngine):
             audio,
             previous_text,
             session_id,
+            is_partial,
         )
         result.latency_ms = (time.perf_counter() - t0) * 1000
         return result
@@ -107,6 +109,7 @@ class FasterWhisperASR(ASREngine):
         audio: np.ndarray,
         previous_text: str,
         session_id: str,
+        is_partial: bool = False,
     ) -> ASRResult:
         """Synchronous transcription — runs inside the executor thread."""
         assert self._model is not None
@@ -115,16 +118,28 @@ class FasterWhisperASR(ASREngine):
         audio_f32 = audio.astype(np.float32)
         duration_s = len(audio_f32) / _SAMPLE_RATE
 
+        # Only use previous text when conditioning is explicitly enabled --
+        # otherwise a wrong transcript steers every following utterance.
+        prompt = cfg.initial_prompt or None
+        if cfg.condition_on_previous_text and previous_text:
+            prompt = previous_text
+
         segments, info = self._model.transcribe(
             audio_f32,
             language=cfg.language if cfg.language else None,
-            beam_size=cfg.beam_size,
+            beam_size=cfg.partial_beam_size if is_partial else cfg.beam_size,
             best_of=cfg.best_of,
             patience=cfg.patience,
-            temperature=cfg.temperature,
+            # Tuple, not a scalar: enables retry-at-higher-temperature when a
+            # decode trips one of the thresholds below.
+            temperature=tuple(cfg.temperature_fallback),
+            compression_ratio_threshold=cfg.compression_ratio_threshold,
+            log_prob_threshold=cfg.log_prob_threshold,
+            no_speech_threshold=cfg.no_speech_threshold,
+            repetition_penalty=cfg.repetition_penalty,
             word_timestamps=cfg.word_timestamps,
             condition_on_previous_text=cfg.condition_on_previous_text,
-            initial_prompt=previous_text if previous_text else (cfg.initial_prompt or None),
+            initial_prompt=prompt,
             vad_filter=False,   # upstream SileroVAD handles this
         )
 

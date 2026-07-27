@@ -55,6 +55,7 @@ class ParakeetASR(ASREngine):
         audio: np.ndarray,
         session_id: str = "",
         previous_text: str = "",
+        is_partial: bool = False,
     ) -> ASRResult:
         if not self._loaded or self._model is None:
             raise RuntimeError("ParakeetASR not loaded — call load() first")
