@@ -187,22 +187,35 @@ class PiperTTS(TTSEngine):
 
     def _synthesize_sync(self, text: str) -> np.ndarray:
         """Synchronous synthesis using Piper — runs inside the executor."""
+        import io
+        import wave as wave_mod
+
         assert self._voice is not None
 
-        synthesize_args = {
-            "length_scale": self._config.length_scale,
-            "noise_scale": self._config.noise_scale,
-            "noise_w": self._config.noise_w,
-        }
-        if hasattr(self._voice, "speaker_id"):
-            synthesize_args["speaker_id"] = self._config.speaker_id
+        synthesize_args: dict = {}
+        for key in ("length_scale", "noise_scale", "noise_w"):
+            val = getattr(self._config, key, None)
+            if val is not None:
+                synthesize_args[key] = val
 
-        audio_chunks: list[bytes] = []
-        for audio_bytes in self._voice.synthesize_stream_raw(text, **synthesize_args):
-            audio_chunks.append(audio_bytes)
+        # API varies by piper-tts version:
+        # >=1.2 streaming:  synthesize_stream_raw(text) → Iterable[bytes]
+        # all versions:     synthesize(text, wav_file)  → writes WAV to file-like
+        if hasattr(self._voice, "synthesize_stream_raw"):
+            chunks: list[bytes] = []
+            for chunk in self._voice.synthesize_stream_raw(text, **synthesize_args):
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+            int16 = np.frombuffer(raw, dtype=np.int16)
+        else:
+            buf = io.BytesIO()
+            with wave_mod.open(buf, "wb") as wf:
+                self._voice.synthesize(text, wf, **synthesize_args)
+            buf.seek(0)
+            with wave_mod.open(buf) as wf:
+                frames = wf.readframes(wf.getnframes())
+            int16 = np.frombuffer(frames, dtype=np.int16)
 
-        raw = b"".join(audio_chunks)
-        int16 = np.frombuffer(raw, dtype=np.int16)
         return int16.astype(np.float32) / 32768.0
 
     # ── Properties ──────────────────────────────────────────────────────────
