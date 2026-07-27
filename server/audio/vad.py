@@ -67,6 +67,9 @@ class SileroVAD:
 
     SAMPLE_RATE = 16000
     WINDOW_SIZE = 512   # samples per inference call
+    # v5 prepends the tail of the previous window as context, so the tensor the
+    # model actually receives is CONTEXT_SIZE + WINDOW_SIZE (576) samples.
+    CONTEXT_SIZE = 64
 
     def __init__(self, model_path: str) -> None:
         self._model_path = model_path
@@ -74,6 +77,7 @@ class SileroVAD:
         # v5 uses a single combined state tensor; v4 uses separate h/c.
         self._is_v5 = True
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros((1, self.CONTEXT_SIZE), dtype=np.float32)
         self._h = np.zeros((2, 1, 64), dtype=np.float32)
         self._c = np.zeros((2, 1, 64), dtype=np.float32)
 
@@ -114,10 +118,16 @@ class SileroVAD:
         sr = np.array(self.SAMPLE_RATE, dtype=np.int64)
 
         if self._is_v5:
+            # v5 is trained on windows carrying CONTEXT_SIZE samples of the
+            # preceding window. The ONNX input axis is dynamic, so feeding a
+            # bare 512-sample window runs without error but leaves the model
+            # permanently misaligned -- it returns ~0 for even loud speech.
+            x = np.concatenate([self._context, x], axis=1)
             out, self._state = self._session.run(
                 None,
                 {"input": x, "state": self._state, "sr": sr},
             )
+            self._context = x[:, -self.CONTEXT_SIZE:]
         else:
             out, self._h, self._c = self._session.run(
                 None,
@@ -127,6 +137,7 @@ class SileroVAD:
 
     def reset(self) -> None:
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros((1, self.CONTEXT_SIZE), dtype=np.float32)
         self._h = np.zeros((2, 1, 64), dtype=np.float32)
         self._c = np.zeros((2, 1, 64), dtype=np.float32)
 
