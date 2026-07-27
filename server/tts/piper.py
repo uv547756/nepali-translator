@@ -187,36 +187,37 @@ class PiperTTS(TTSEngine):
 
     def _synthesize_sync(self, text: str) -> np.ndarray:
         """Synchronous synthesis using Piper — runs inside the executor."""
+        import inspect
         import io
         import wave as wave_mod
 
         assert self._voice is not None
 
-        synthesize_args: dict = {}
-        for key in ("length_scale", "noise_scale", "noise_w"):
-            val = getattr(self._config, key, None)
-            if val is not None:
-                synthesize_args[key] = val
+        # Build kwargs only for parameters the installed version actually accepts
+        _optional = {"length_scale": self._config.length_scale,
+                     "noise_scale":  self._config.noise_scale,
+                     "noise_w":      self._config.noise_w}
 
-        # API varies by piper-tts version:
-        # >=1.2 streaming:  synthesize_stream_raw(text) → Iterable[bytes]
-        # all versions:     synthesize(text, wav_file)  → writes WAV to file-like
         if hasattr(self._voice, "synthesize_stream_raw"):
-            chunks: list[bytes] = []
-            for chunk in self._voice.synthesize_stream_raw(text, **synthesize_args):
-                chunks.append(chunk)
+            sig = inspect.signature(self._voice.synthesize_stream_raw)
+            kwargs = {k: v for k, v in _optional.items() if k in sig.parameters}
+            chunks: list[bytes] = list(self._voice.synthesize_stream_raw(text, **kwargs))
             raw = b"".join(chunks)
-            int16 = np.frombuffer(raw, dtype=np.int16)
-        else:
-            buf = io.BytesIO()
-            with wave_mod.open(buf, "wb") as wf:
-                self._voice.synthesize(text, wf, **synthesize_args)
-            buf.seek(0)
-            with wave_mod.open(buf) as wf:
-                frames = wf.readframes(wf.getnframes())
-            int16 = np.frombuffer(frames, dtype=np.int16)
+            return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
-        return int16.astype(np.float32) / 32768.0
+        # Fallback: synthesize(text, wav_file) — stable across all versions
+        sig = inspect.signature(self._voice.synthesize)
+        kwargs = {k: v for k, v in _optional.items() if k in sig.parameters}
+        buf = io.BytesIO()
+        wf = wave_mod.open(buf, "wb")
+        try:
+            self._voice.synthesize(text, wf, **kwargs)
+        finally:
+            wf.close()
+        buf.seek(0)
+        with wave_mod.open(buf) as wf_r:
+            frames = wf_r.readframes(wf_r.getnframes())
+        return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
 
     # ── Properties ──────────────────────────────────────────────────────────
 
