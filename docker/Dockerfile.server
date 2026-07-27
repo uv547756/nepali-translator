@@ -1,0 +1,63 @@
+# ── Stage 1: Build the web client ──────────────────────────────────────────
+FROM node:20-alpine AS client-build
+
+WORKDIR /build/client
+COPY client/package.json client/package.json
+RUN npm install --frozen-lockfile
+
+COPY client/ .
+RUN npm run build
+
+# ── Stage 2: Python inference server ───────────────────────────────────────
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# System packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    espeak-ng \
+    libespeak-ng1 \
+    libsndfile1 \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.11 the default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+ && update-alternatives --install /usr/bin/python  python  /usr/bin/python3.11 1
+
+WORKDIR /app
+
+# Install PyTorch with CUDA 12.1
+RUN pip3 install --no-cache-dir \
+    torch==2.3.1+cu121 \
+    torchaudio==2.3.1+cu121 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Install remaining Python dependencies
+COPY server/requirements.txt server/requirements.txt
+RUN pip3 install --no-cache-dir -r server/requirements.txt
+
+# Copy server source
+COPY server/ server/
+
+# Copy compiled web client from stage 1
+COPY --from=client-build /build/client/dist client/dist
+
+# Copy configs
+COPY configs/ configs/
+
+# Models directory — mounted as a volume at runtime
+RUN mkdir -p models
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+CMD ["python3", "-m", "server.main", "--config", "configs/default.yaml"]

@@ -1,0 +1,36 @@
+# High-quality profile: maximizes translation accuracy.
+# Higher beam search, slower VAD thresholds, noise reduction always on.
+# Typical E2E latency: 700-1200ms.
+
+system:
+  cuda_device: 0
+
+vad:
+  threshold: 0.6
+  min_silence_duration_ms: 700
+  speech_pad_ms: 300
+
+noise_reduction:
+  enabled: true
+  engine: deepfilter
+
+asr:
+  compute_type: float16
+  beam_size: 10
+  best_of: 10
+  patience: 2.0
+  partial_interval_s: 1.5
+  stability_window: 4
+
+translation:
+  num_beams: 8
+  max_new_tokens: 512
+
+tts:
+  length_scale: 1.1
+  sentence_silence_s: 0.2
+
+pipeline:
+  incremental:
+    min_commit_words: 3
+    max_buffer_chars: 100

@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  translator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    image: nepali-translator:latest
+    container_name: nepali-translator
+    restart: unless-stopped
+
+    # GPU access (requires nvidia-container-toolkit)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      # Models directory — download once, persist across container restarts
+      - ./models:/app/models:ro
+      # TLS certificates (optional — mount your own)
+      # - /etc/letsencrypt/live/your-domain:/etc/translator:ro
+      # Override config at runtime
+      - ./configs:/app/configs:ro
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONUNBUFFERED=1
+
+    # Limit CUDA to a single GPU (override with CUDA_VISIBLE_DEVICES if needed)
+    shm_size: "2gb"   # shared memory for PyTorch multiprocessing
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"

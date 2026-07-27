@@ -1,0 +1,95 @@
+system:
+  cuda_device: 0
+  cuda_memory_fraction: 0.85
+  language:
+    source: npi
+    target: eng
+  log_level: INFO
+  log_format: json
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  tls:
+    enabled: false
+    cert_file: /etc/translator/cert.pem
+    key_file: /etc/translator/key.pem
+  cors_origins:
+    - "*"
+  max_concurrent_sessions: 4
+  audio_codec: pcm
+
+vad:
+  engine: silero
+  model_path: models/silero_vad.onnx
+  threshold: 0.5
+  min_speech_duration_ms: 250
+  max_speech_duration_s: 30
+  min_silence_duration_ms: 500
+  speech_pad_ms: 200
+  window_size_samples: 512
+
+noise_reduction:
+  enabled: true
+  engine: deepfilter
+  model_path: models/DeepFilterNet3
+  attenuation_limit_db: 100
+
+asr:
+  engine: faster_whisper
+  model: large-v3
+  model_path: models/faster-whisper-large-v3
+  compute_type: int8
+  device: cuda
+  language: ne
+  beam_size: 5
+  best_of: 5
+  patience: 1.0
+  temperature: 0.0
+  word_timestamps: true
+  condition_on_previous_text: true
+  initial_prompt: ""
+  partial_interval_s: 1.0
+  stability_window: 3
+
+translation:
+  engine: seamless
+  model: facebook/seamless-m4t-v2-large
+  model_path: models/seamless-m4t-v2-large
+  device: cuda
+  torch_dtype: float16
+  source_lang: npi
+  target_lang: eng
+  max_new_tokens: 256
+  num_beams: 4
+  context_window_chars: 200
+  lru_cache_size: 1000
+
+tts:
+  engine: piper
+  model_path: models/piper/en_US-lessac-medium.onnx
+  config_path: models/piper/en_US-lessac-medium.onnx.json
+  speaker_id: 0
+  length_scale: 1.0
+  noise_scale: 0.667
+  noise_w: 0.8
+  sentence_silence_s: 0.15
+  use_gpu: false
+
+pipeline:
+  incremental:
+    enabled: true
+    min_commit_words: 1
+    max_buffer_chars: 80
+  queues:
+    audio_chunk_maxsize: 10
+    speech_segment_maxsize: 5
+    asr_result_maxsize: 5
+    tts_audio_maxsize: 20
+
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+  latency_window_size: 100
+  log_every_n_utterances: 10

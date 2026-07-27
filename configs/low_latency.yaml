@@ -1,0 +1,31 @@
+# Low-latency profile: faster at the cost of some accuracy.
+# Reduces beam size, uses faster VAD settings, disables noise reduction.
+# Typical E2E latency: 350-550ms vs 500-800ms for default.
+
+system:
+  cuda_device: 0
+
+vad:
+  min_silence_duration_ms: 300
+  speech_pad_ms: 100
+
+noise_reduction:
+  enabled: false
+
+asr:
+  beam_size: 1
+  best_of: 1
+  partial_interval_s: 0.6
+  stability_window: 2
+
+translation:
+  num_beams: 1
+
+tts:
+  length_scale: 0.9
+  sentence_silence_s: 0.05
+
+pipeline:
+  incremental:
+    min_commit_words: 2
+    max_buffer_chars: 60
