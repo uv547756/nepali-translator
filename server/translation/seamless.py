@@ -48,6 +48,22 @@ class SeamlessM4TTranslator(TranslationEngine):
 
     # ── Lifecycle ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _resolve_model_path(local_path: str) -> str:
+        """Return local_path if it contains weight files, else fall back to HF hub ID."""
+        from pathlib import Path
+        p = Path(local_path)
+        if p.is_dir():
+            has_weights = (
+                (p / "model.safetensors").exists()
+                or (p / "pytorch_model.bin").exists()
+                or bool(list(p.glob("model-*.safetensors")))
+                or bool(list(p.glob("pytorch_model-*.bin")))
+            )
+            if has_weights:
+                return local_path
+        return "facebook/seamless-m4t-v2-large"
+
     def load(self) -> None:
         import torch
         from transformers import AutoProcessor, SeamlessM4Tv2ForTextToText
@@ -55,9 +71,17 @@ class SeamlessM4TTranslator(TranslationEngine):
         t0 = time.perf_counter()
         dtype = torch.float16 if self._config.torch_dtype == "float16" else torch.float32
 
-        self._processor = AutoProcessor.from_pretrained(self._config.model_path)
+        source = self._resolve_model_path(self._config.model_path)
+        if source != self._config.model_path:
+            logger.warning(
+                "Local model path has no weights — loading from HuggingFace hub",
+                local_path=self._config.model_path,
+                hub_id=source,
+            )
+
+        self._processor = AutoProcessor.from_pretrained(source)
         self._model = SeamlessM4Tv2ForTextToText.from_pretrained(
-            self._config.model_path,
+            source,
             torch_dtype=dtype,
         )
 

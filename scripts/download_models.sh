@@ -36,7 +36,13 @@ fi
 
 # ── SeamlessM4T v2 large ───────────────────────────────────────────────────
 SEAMLESS_DIR="$MODELS_DIR/seamless-m4t-v2-large"
-if [[ ! -d "$SEAMLESS_DIR" ]]; then
+_seamless_has_weights() {
+    [[ -f "$SEAMLESS_DIR/model.safetensors" ]] ||
+    [[ -f "$SEAMLESS_DIR/pytorch_model.bin" ]] ||
+    compgen -G "$SEAMLESS_DIR/model-*.safetensors" > /dev/null 2>&1 ||
+    compgen -G "$SEAMLESS_DIR/pytorch_model-*.bin" > /dev/null 2>&1
+}
+if ! _seamless_has_weights; then
     echo "--> Downloading SeamlessM4T v2 large (this is ~4.5 GB — may take a while)..."
     "$VENV_PYTHON" -c "
 from transformers import AutoProcessor, SeamlessM4Tv2ForTextToText
@@ -53,7 +59,7 @@ SeamlessM4Tv2ForTextToText.from_pretrained(
 print('SeamlessM4T v2 large downloaded.')
 "
 else
-    echo "--> SeamlessM4T v2 large already exists, skipping."
+    echo "--> SeamlessM4T v2 large already exists (weights present), skipping."
 fi
 
 # ── Silero VAD ONNX ────────────────────────────────────────────────────────
