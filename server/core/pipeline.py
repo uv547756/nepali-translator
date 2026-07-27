@@ -193,6 +193,7 @@ class AsyncPipeline:
         self._stat_asr_calls = 0
         self._stat_partials = 0
         self._stat_max_prob = 0.0
+        self._stat_peak_amp = 0.0
 
     # ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -255,6 +256,7 @@ class AsyncPipeline:
                 session_id=self._session_id,
                 audio_chunks_in=self._stat_audio_chunks,
                 vad_chunks=self._stat_vad_chunks,
+                peak_amplitude=round(self._stat_peak_amp, 5),
                 vad_prob_max=round(self._stat_max_prob, 3),
                 vad_threshold=self._config.vad.threshold,
                 in_speech=self._vad_segmenter.is_in_speech,
@@ -263,7 +265,8 @@ class AsyncPipeline:
                 partials=self._stat_partials,
                 muted=self._muted,
             )
-            self._stat_max_prob = 0.0   # reset peak for the next window
+            self._stat_max_prob = 0.0   # reset peaks for the next window
+            self._stat_peak_amp = 0.0
 
     async def stop(self) -> None:
         self._running = False
@@ -296,6 +299,14 @@ class AsyncPipeline:
         # Convert to float32
         pcm_int16 = np.frombuffer(pcm_bytes, dtype=np.int16)
         audio_f32 = pcm_int16.astype(np.float32) / 32768.0
+
+        # Track input level: distinguishes "no signal reaching the server" from
+        # "signal present but VAD not firing". Without this the two are
+        # indistinguishable, since both show vad_prob_max ~ 0.
+        if audio_f32.size:
+            self._stat_peak_amp = max(
+                self._stat_peak_amp, float(np.abs(audio_f32).max())
+            )
 
         # Write to ring buffer for incremental ASR partials
         self._audio_ringbuf.write(audio_f32)
