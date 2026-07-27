@@ -43,12 +43,35 @@ source "$VENV_DIR/bin/activate"
 
 pip install --upgrade pip wheel setuptools --quiet
 
-# ── 3. PyTorch with CUDA 12.1 ──────────────────────────────────────────────
-echo "==> Installing PyTorch (CUDA 12.1)"
+# ── 3. PyTorch — detect CUDA version and pick matching wheel ───────────────
+_cuda_ver=""
+if command -v nvcc &>/dev/null; then
+    _cuda_ver=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' | head -1)
+elif command -v nvidia-smi &>/dev/null; then
+    _cuda_ver=$(nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+' | head -1)
+fi
+
+# Map major.minor → PyTorch wheel tag (newest stable that supports it)
+_pt_version="2.5.1"
+_pt_index="https://download.pytorch.org/whl/cu124"   # default: CUDA 12.4
+case "${_cuda_ver%%.*}" in   # match on major version only
+    12)
+        case "$_cuda_ver" in
+            12.1) _pt_index="https://download.pytorch.org/whl/cu121" ;;
+            12.4) _pt_index="https://download.pytorch.org/whl/cu124" ;;
+            12.6|12.7|12.8|12.9)
+                  _pt_version="2.6.0"
+                  _pt_index="https://download.pytorch.org/whl/cu126" ;;
+            *)    _pt_index="https://download.pytorch.org/whl/cu124" ;;
+        esac ;;
+    11)   _pt_index="https://download.pytorch.org/whl/cu118" ;;
+esac
+
+echo "==> Installing PyTorch ${_pt_version} (CUDA ${_cuda_ver:-unknown}, index: $_pt_index)"
 pip install --quiet \
-    torch==2.3.1+cu121 \
-    torchaudio==2.3.1+cu121 \
-    --index-url https://download.pytorch.org/whl/cu121
+    "torch==${_pt_version}" \
+    "torchaudio==${_pt_version}" \
+    --index-url "$_pt_index"
 
 # ── 4. Python dependencies ─────────────────────────────────────────────────
 echo "==> Installing Python dependencies"

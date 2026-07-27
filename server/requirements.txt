@@ -1,50 +1,52 @@
-# ── Install PyTorch SEPARATELY before this file: ──────────────────────────
-# pip install torch==2.3.1+cu121 torchaudio==2.3.1+cu121 \
-#     --index-url https://download.pytorch.org/whl/cu121
+# PyTorch is installed by scripts/setup.sh before this file.
+# It auto-detects your CUDA version and picks the right wheel.
+# To install manually:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # ── Core ──────────────────────────────────────────────────────────────────
-numpy==1.26.4
-pydantic==2.7.4
-pydantic-settings==2.3.4
-PyYAML==6.0.1
-structlog==24.2.0
-python-dotenv==1.0.1
+numpy>=1.26,<3
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+PyYAML>=6.0
+structlog>=24.0
+python-dotenv>=1.0
 
 # ── Web server ─────────────────────────────────────────────────────────────
-fastapi==0.111.1
-uvicorn[standard]==0.30.1
-python-multipart==0.0.9
-websockets==12.0
+fastapi>=0.111,<1
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+websockets>=12.0
 
 # ── ASR ───────────────────────────────────────────────────────────────────
-faster-whisper==1.0.3
-ctranslate2==4.3.1
+faster-whisper>=1.0.3
+ctranslate2>=4.3
 
 # ── Translation ────────────────────────────────────────────────────────────
-transformers==4.41.2
-sentencepiece==0.2.0
-accelerate==0.31.0
+transformers>=4.41
+sentencepiece>=0.2
+accelerate>=0.31
 
 # ── TTS ───────────────────────────────────────────────────────────────────
-piper-tts==1.2.0
-onnxruntime-gpu==1.18.0
-phonemizer==3.2.1
+piper-tts>=1.2.0
+onnxruntime-gpu>=1.18
+phonemizer>=3.2
 
 # ── VAD ───────────────────────────────────────────────────────────────────
-onnxruntime==1.18.0
+# onnxruntime already pulled in by onnxruntime-gpu; list explicitly for CPU-only fallback
+onnxruntime>=1.18
 
 # ── Noise Reduction ────────────────────────────────────────────────────────
-deepfilternet==0.5.6
+deepfilternet>=0.5.6
 
 # ── Audio I/O ─────────────────────────────────────────────────────────────
-soundfile==0.12.1
-scipy==1.13.1
+soundfile>=0.12
+scipy>=1.13
 
 # ── Monitoring ─────────────────────────────────────────────────────────────
-prometheus-client==0.20.0
-pynvml==11.5.0
+prometheus-client>=0.20
+pynvml>=11.5
 
 # ── Testing ───────────────────────────────────────────────────────────────
-pytest==8.2.2
-pytest-asyncio==0.23.8
-httpx==0.27.0
+pytest>=8.2
+pytest-asyncio>=0.23
+httpx>=0.27
