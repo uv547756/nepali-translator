@@ -23,6 +23,14 @@ from pathlib import Path
 
 import structlog
 
+# NOTE: This import must stay at module level. `from __future__ import
+# annotations` turns every annotation into a string, and FastAPI resolves
+# those strings against the function's __globals__ (the module namespace).
+# If WebSocket is imported inside run_server() it is only a function local,
+# the forward reference fails to resolve, and FastAPI silently downgrades
+# the parameter to a query parameter -- rejecting every handshake with 403.
+from fastapi import WebSocket
+
 
 def _configure_logging(level: str, fmt: str) -> None:
     structlog.configure(
@@ -88,7 +96,7 @@ def _parse_args() -> argparse.Namespace:
 async def run_server(config_path: str, host: str | None, port: int | None) -> None:
     """Start the FastAPI + uvicorn server."""
     import uvicorn
-    from fastapi import FastAPI, WebSocket
+    from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
 
@@ -150,7 +158,6 @@ async def run_server(config_path: str, host: str | None, port: int | None) -> No
 
     @app.websocket("/ws/translate")
     async def ws_translate(websocket: WebSocket) -> None:
-        logger.info("ws_translate endpoint entered")
         await handle_translate_stream(websocket, factory)
 
     # Prometheus metrics endpoint
