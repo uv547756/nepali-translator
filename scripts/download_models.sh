@@ -69,15 +69,16 @@ else
 fi
 
 # ── Piper TTS — en_US lessac medium ────────────────────────────────────────
+# Voices are hosted on HuggingFace under rhasspy/piper-voices
 PIPER_DIR="$MODELS_DIR/piper"
 mkdir -p "$PIPER_DIR"
 
 PIPER_ONNX="$PIPER_DIR/en_US-lessac-medium.onnx"
 if [[ ! -f "$PIPER_ONNX" ]]; then
     echo "--> Downloading Piper TTS (en_US-lessac-medium)..."
-    BASE_URL="https://github.com/rhasspy/piper/releases/download/v1.2.0"
-    curl -fsSL "$BASE_URL/en_US-lessac-medium.onnx"      -o "$PIPER_ONNX"
-    curl -fsSL "$BASE_URL/en_US-lessac-medium.onnx.json" -o "$PIPER_ONNX.json"
+    HF_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
+    curl -fsSL "$HF_BASE/en_US-lessac-medium.onnx"      -o "$PIPER_ONNX"
+    curl -fsSL "$HF_BASE/en_US-lessac-medium.onnx.json" -o "$PIPER_ONNX.json"
     echo "Piper TTS downloaded."
 else
     echo "--> Piper TTS already exists, skipping."
