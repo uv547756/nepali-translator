@@ -186,34 +186,63 @@ class PiperTTS(TTSEngine):
         return int16.tobytes()
 
     def _synthesize_sync(self, text: str) -> np.ndarray:
-        """Synchronous synthesis using Piper — runs inside the executor."""
+        """Synchronous synthesis using Piper — runs inside the executor.
+
+        The piper-tts API changed across releases, so dispatch on what the
+        installed PiperVoice actually exposes:
+
+          >= 1.3  synthesize(text)              -> Iterable[AudioChunk]
+          1.2.x   synthesize_stream_raw(text)   -> Iterable[bytes] (int16 PCM)
+          older   synthesize(text, wav_file)    -> writes a WAV to a file object
+        """
         import inspect
         import io
         import wave as wave_mod
 
-        assert self._voice is not None
+        voice = self._voice
+        assert voice is not None
 
-        # Build kwargs only for parameters the installed version actually accepts
-        _optional = {"length_scale": self._config.length_scale,
-                     "noise_scale":  self._config.noise_scale,
-                     "noise_w":      self._config.noise_w}
+        # Only pass tuning params the installed signature actually accepts.
+        optional = {
+            "length_scale": self._config.length_scale,
+            "noise_scale": self._config.noise_scale,
+            "noise_w": self._config.noise_w,
+        }
 
-        if hasattr(self._voice, "synthesize_stream_raw"):
-            sig = inspect.signature(self._voice.synthesize_stream_raw)
-            kwargs = {k: v for k, v in _optional.items() if k in sig.parameters}
-            chunks: list[bytes] = list(self._voice.synthesize_stream_raw(text, **kwargs))
-            raw = b"".join(chunks)
+        # ── piper-tts >= 1.3: synthesize() yields AudioChunk objects ────────
+        if hasattr(voice, "synthesize_wav"):
+            pieces: list[np.ndarray] = []
+            for chunk in voice.synthesize(text):
+                if hasattr(chunk, "audio_float_array"):
+                    pieces.append(np.asarray(chunk.audio_float_array, dtype=np.float32))
+                elif hasattr(chunk, "audio_int16_bytes"):
+                    raw = chunk.audio_int16_bytes
+                    pieces.append(np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0)
+                else:
+                    pieces.append(np.frombuffer(bytes(chunk), dtype=np.int16).astype(np.float32) / 32768.0)
+
+                sr = getattr(chunk, "sample_rate", None)
+                if sr:
+                    self._sr = int(sr)
+
+            return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+
+        # ── piper-tts 1.2.x: raw int16 byte stream ─────────────────────────
+        if hasattr(voice, "synthesize_stream_raw"):
+            sig = inspect.signature(voice.synthesize_stream_raw)
+            kwargs = {k: v for k, v in optional.items() if k in sig.parameters}
+            raw = b"".join(voice.synthesize_stream_raw(text, **kwargs))
             return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
-        # Fallback: synthesize(text, wav_file) — stable across all versions
-        sig = inspect.signature(self._voice.synthesize)
-        kwargs = {k: v for k, v in _optional.items() if k in sig.parameters}
+        # ── Oldest API: writes a complete WAV into a file object ───────────
+        sig = inspect.signature(voice.synthesize)
+        kwargs = {k: v for k, v in optional.items() if k in sig.parameters}
         buf = io.BytesIO()
-        wf = wave_mod.open(buf, "wb")
-        try:
-            self._voice.synthesize(text, wf, **kwargs)
-        finally:
-            wf.close()
+        with wave_mod.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self._sr)
+            voice.synthesize(text, wf, **kwargs)
         buf.seek(0)
         with wave_mod.open(buf) as wf_r:
             frames = wf_r.readframes(wf_r.getnframes())
