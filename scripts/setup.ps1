@@ -3,82 +3,79 @@
 # Requires: Python 3.10+, Git, NVIDIA drivers with nvidia-smi in PATH.
 
 param(
-    [switch]$SkipNode  # pass -SkipNode to skip npm install
+    [switch]$SkipNode
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$VenvDir  = Join-Path $RepoRoot ".venv"
+$RepoRoot  = Split-Path -Parent $PSScriptRoot
+$VenvDir   = Join-Path $RepoRoot ".venv"
+$PtIndex   = "https://download.pytorch.org/whl/cu128"
 
-Write-Host "==> Nepali Translator Setup (Windows)" -ForegroundColor Cyan
+Write-Host "==> Nepali Translator Setup (Windows)"
 Write-Host "    Repo: $RepoRoot"
 
-# ── 0. Set KMP_DUPLICATE_LIB_OK to avoid OpenMP conflicts on Windows ────────
+# --- Set KMP_DUPLICATE_LIB_OK to silence OpenMP duplicate DLL warning --------
 [System.Environment]::SetEnvironmentVariable("KMP_DUPLICATE_LIB_OK", "TRUE", "User")
 $env:KMP_DUPLICATE_LIB_OK = "TRUE"
-Write-Host "    KMP_DUPLICATE_LIB_OK=TRUE set (user env)"
+Write-Host "    KMP_DUPLICATE_LIB_OK=TRUE written to user environment"
 
-# ── 1. Check prerequisites ────────────────────────────────────────────────────
-foreach ($cmd in @("python", "git", "curl")) {
+# --- Check prerequisites ------------------------------------------------------
+foreach ($cmd in @("python", "git")) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
         Write-Error "ERROR: '$cmd' not found in PATH. Install it and re-run."
     }
 }
 
-# espeak-ng (required by Piper phonemizer)
 if (-not (Get-Command "espeak-ng" -ErrorAction SilentlyContinue)) {
-    Write-Host ""
-    Write-Warning "espeak-ng not found. Piper TTS needs it for phonemization."
-    Write-Host "  Install via winget:  winget install --id espeak-ng.espeak-ng"
-    Write-Host "  Or download from:    https://github.com/espeak-ng/espeak-ng/releases"
+    Write-Warning "espeak-ng not found. Piper TTS requires it."
+    Write-Host "  Install: winget install --id espeak-ng.espeak-ng"
     Write-Host "  Then re-run this script."
-    Write-Host ""
 }
 
-# ── 2. Python virtual environment ─────────────────────────────────────────────
+# --- Python virtual environment -----------------------------------------------
 Write-Host "==> Creating Python virtual environment: $VenvDir"
 if (-not (Test-Path $VenvDir)) {
     python -m venv $VenvDir
 }
+
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $PipExe    = Join-Path $VenvDir "Scripts\pip.exe"
 
 & $PipExe install --upgrade pip wheel setuptools --quiet
 
-# ── 3. PyTorch — detect CUDA version from nvidia-smi ─────────────────────────
-$PtIndex = "https://download.pytorch.org/whl/cu128"  # default: newest stable
+# --- PyTorch: detect CUDA version from nvidia-smi and pick wheel index --------
+$smiOut = ""
+try { $smiOut = & nvidia-smi 2>$null } catch {}
 
-try {
-    $smiOut = & nvidia-smi 2>$null
-    if ($smiOut -match "CUDA Version:\s*(\d+)\.(\d+)") {
-        $major = [int]$Matches[1]
-        $minor = [int]$Matches[2]
-        if ($major -eq 11) {
-            $PtIndex = "https://download.pytorch.org/whl/cu118"
-        } elseif ($major -eq 12 -and $minor -le 1) {
-            $PtIndex = "https://download.pytorch.org/whl/cu121"
-        } elseif ($major -eq 12 -and $minor -le 4) {
-            $PtIndex = "https://download.pytorch.org/whl/cu124"
-        } elseif ($major -eq 12) {
-            $PtIndex = "https://download.pytorch.org/whl/cu126"
-        }
-        # else: major 13+ keeps the cu128 default set above
-        Write-Host "    Detected CUDA $major.$minor"
+if ($smiOut -match "CUDA Version:\s*(\d+)\.(\d+)") {
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    Write-Host "    Detected CUDA $major.$minor"
+
+    if ($major -eq 11) {
+        $PtIndex = "https://download.pytorch.org/whl/cu118"
+    } elseif ($major -eq 12 -and $minor -le 1) {
+        $PtIndex = "https://download.pytorch.org/whl/cu121"
+    } elseif ($major -eq 12 -and $minor -le 4) {
+        $PtIndex = "https://download.pytorch.org/whl/cu124"
+    } elseif ($major -eq 12) {
+        $PtIndex = "https://download.pytorch.org/whl/cu126"
     }
-} catch {
-    Write-Host "    nvidia-smi not found — defaulting to cu128 index"
+    # CUDA 13+ keeps cu128 default
+} else {
+    Write-Host "    Could not detect CUDA version -- using cu128 index (RTX 5090 default)"
 }
 
 Write-Host "==> Installing PyTorch (latest stable, index: $PtIndex)"
 & $PipExe install torch torchaudio --index-url $PtIndex
 
-# ── 4. Python dependencies ────────────────────────────────────────────────────
+# --- Python dependencies ------------------------------------------------------
 Write-Host "==> Installing Python dependencies"
 & $PipExe install -r (Join-Path $RepoRoot "server\requirements.txt")
 
-# ── 5. Node.js / npm for the web client ──────────────────────────────────────
+# --- Node.js / npm for the web client -----------------------------------------
 if (-not $SkipNode) {
     if (Get-Command npm -ErrorAction SilentlyContinue) {
         Write-Host "==> Installing Node dependencies"
@@ -86,21 +83,18 @@ if (-not $SkipNode) {
         npm install --silent
         Pop-Location
     } else {
-        Write-Host "==> npm not found — skipping client build (install Node.js >= 20)"
+        Write-Host "==> npm not found -- skipping client build (install Node.js >= 20)"
     }
 }
 
-# ── 6. Models directory ───────────────────────────────────────────────────────
+# --- Models directory ---------------------------------------------------------
 New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot "models") | Out-Null
 
 Write-Host ""
-Write-Host "==> Setup complete!" -ForegroundColor Green
+Write-Host "==> Setup complete!"
 Write-Host ""
 Write-Host "Next steps:"
-Write-Host "  1. Download models:"
-Write-Host "       powershell scripts\download_models.ps1"
-Write-Host "  2. Start the server:"
-Write-Host "       .\translator.ps1 --mode server --config configs\default.yaml"
-Write-Host "  3. Offline test:"
-Write-Host "       .\translator.ps1 --mode offline --input test.wav --output out.wav"
+Write-Host "  1. Download models:   powershell -ExecutionPolicy Bypass -File scripts\download_models.ps1"
+Write-Host "  2. Run offline test:  .\translator.ps1 --mode offline --input test.wav --output out.wav"
+Write-Host "  3. Run server:        .\translator.ps1 --mode server --config configs\default.yaml"
 Write-Host ""

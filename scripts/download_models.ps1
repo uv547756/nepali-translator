@@ -12,14 +12,14 @@ if (-not (Test-Path $PythonExe)) {
     Write-Error "ERROR: .venv not found. Run scripts\setup.ps1 first."
 }
 
-Write-Host "==> Downloading models to $ModelsDir" -ForegroundColor Cyan
+Write-Host "==> Downloading models to $ModelsDir"
 New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
 
-# ── Faster-Whisper large-v3 ───────────────────────────────────────────────────
+# --- Faster-Whisper large-v3 --------------------------------------------------
 $WhisperDir = Join-Path $ModelsDir "faster-whisper-large-v3"
 if (-not (Test-Path $WhisperDir)) {
     Write-Host "--> Downloading Faster-Whisper large-v3 (INT8)..."
-    & $PythonExe -c @"
+    & $PythonExe -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
     'Systran/faster-whisper-large-v3',
@@ -27,21 +27,21 @@ snapshot_download(
     local_dir_use_symlinks=False,
 )
 print('Faster-Whisper large-v3 downloaded.')
-"@
+"
 } else {
     Write-Host "--> Faster-Whisper large-v3 already exists, skipping."
 }
 
-# ── SeamlessM4T v2 large ─────────────────────────────────────────────────────
+# --- SeamlessM4T v2 large -----------------------------------------------------
 $SeamlessDir = Join-Path $ModelsDir "seamless-m4t-v2-large"
-$hasWeights  = (Test-Path "$SeamlessDir\model.safetensors") -or
-               (Test-Path "$SeamlessDir\pytorch_model.bin") -or
-               (@(Get-ChildItem "$SeamlessDir\model-*.safetensors" -ErrorAction SilentlyContinue)).Count -gt 0
+$hasWeights  = (Test-Path (Join-Path $SeamlessDir "model.safetensors")) -or
+               (Test-Path (Join-Path $SeamlessDir "pytorch_model.bin")) -or
+               (@(Get-ChildItem (Join-Path $SeamlessDir "model-*.safetensors") -ErrorAction SilentlyContinue)).Count -gt 0
 
 if (-not $hasWeights) {
     Write-Host "--> Downloading SeamlessM4T v2 large (~4.5 GB, this will take a while)..."
     New-Item -ItemType Directory -Force -Path $SeamlessDir | Out-Null
-    & $PythonExe -c @"
+    & $PythonExe -c "
 from transformers import AutoProcessor, SeamlessM4Tv2ForTextToText
 import torch
 print('Downloading processor...')
@@ -51,12 +51,12 @@ SeamlessM4Tv2ForTextToText.from_pretrained(
     'facebook/seamless-m4t-v2-large', torch_dtype=torch.float16
 ).save_pretrained(r'$SeamlessDir')
 print('SeamlessM4T v2 large downloaded.')
-"@
+"
 } else {
     Write-Host "--> SeamlessM4T v2 large already exists (weights present), skipping."
 }
 
-# ── Silero VAD ONNX ───────────────────────────────────────────────────────────
+# --- Silero VAD ONNX ----------------------------------------------------------
 $SileroFile = Join-Path $ModelsDir "silero_vad.onnx"
 if (-not (Test-Path $SileroFile)) {
     Write-Host "--> Downloading Silero VAD v5 ONNX..."
@@ -67,7 +67,7 @@ if (-not (Test-Path $SileroFile)) {
     Write-Host "--> Silero VAD already exists, skipping."
 }
 
-# ── Piper TTS — en_US lessac medium ──────────────────────────────────────────
+# --- Piper TTS (en_US lessac medium) ------------------------------------------
 $PiperDir  = Join-Path $ModelsDir "piper"
 $PiperOnnx = Join-Path $PiperDir "en_US-lessac-medium.onnx"
 New-Item -ItemType Directory -Force -Path $PiperDir | Out-Null
@@ -83,7 +83,7 @@ if (-not (Test-Path $PiperOnnx)) {
 }
 
 Write-Host ""
-Write-Host "==> All models downloaded." -ForegroundColor Green
+Write-Host "==> All models downloaded."
 Write-Host ""
 Write-Host "Model sizes:"
 Get-ChildItem $ModelsDir | ForEach-Object {
