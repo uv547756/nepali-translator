@@ -197,7 +197,29 @@ class AsyncPipeline:
             asyncio.create_task(self._audio_forwarder(), name=f"fwd-{self._session_id[:8]}"),
             asyncio.create_task(self._stats_coroutine(), name=f"stat-{self._session_id[:8]}"),
         ]
+        for task in self._tasks:
+            task.add_done_callback(self._on_task_done)
         logger.info("Pipeline started", session_id=self._session_id)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Report a stage coroutine that died.
+
+        asyncio stores the exception on the task object rather than raising it.
+        These tasks are not awaited until stop(), so without this callback a
+        crashed stage is completely silent -- the pipeline simply stops making
+        progress with nothing in the logs to say why.
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Pipeline stage died",
+                stage=task.get_name(),
+                error=str(exc),
+                session_id=self._session_id,
+                exc_info=exc,
+            )
 
     async def _stats_coroutine(self) -> None:
         """Log a periodic pipeline summary so stalls are visible per stage.

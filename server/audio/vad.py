@@ -71,6 +71,9 @@ class SileroVAD:
     def __init__(self, model_path: str) -> None:
         self._model_path = model_path
         self._session = None
+        # v5 uses a single combined state tensor; v4 uses separate h/c.
+        self._is_v5 = True
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
         self._h = np.zeros((2, 1, 64), dtype=np.float32)
         self._c = np.zeros((2, 1, 64), dtype=np.float32)
 
@@ -87,8 +90,20 @@ class SileroVAD:
             sess_options=opts,
             providers=["CPUExecutionProvider"],
         )
+
+        # Silero v5 takes ("input", "state", "sr"); v4 took ("input", "sr", "h", "c").
+        # Feeding the wrong names raises INVALID_ARGUMENT on the first inference,
+        # so pick the interface from the model actually loaded.
+        input_names = {i.name for i in self._session.get_inputs()}
+        self._is_v5 = "state" in input_names
+
         self.reset()
-        logger.info("Silero VAD loaded", model_path=self._model_path)
+        logger.info(
+            "Silero VAD loaded",
+            model_path=self._model_path,
+            interface="v5" if self._is_v5 else "v4",
+            inputs=sorted(input_names),
+        )
 
     def process_chunk(self, chunk: np.ndarray) -> float:
         """Return speech probability for a 512-sample window."""
@@ -98,16 +113,20 @@ class SileroVAD:
         x = chunk.astype(np.float32).reshape(1, -1)
         sr = np.array(self.SAMPLE_RATE, dtype=np.int64)
 
-        ort_inputs = {
-            "input": x,
-            "sr": sr,
-            "h": self._h,
-            "c": self._c,
-        }
-        out, self._h, self._c = self._session.run(None, ort_inputs)
+        if self._is_v5:
+            out, self._state = self._session.run(
+                None,
+                {"input": x, "state": self._state, "sr": sr},
+            )
+        else:
+            out, self._h, self._c = self._session.run(
+                None,
+                {"input": x, "sr": sr, "h": self._h, "c": self._c},
+            )
         return float(out.squeeze())
 
     def reset(self) -> None:
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
         self._h = np.zeros((2, 1, 64), dtype=np.float32)
         self._c = np.zeros((2, 1, 64), dtype=np.float32)
 
