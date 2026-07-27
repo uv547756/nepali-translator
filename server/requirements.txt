@@ -35,8 +35,11 @@ phonemizer>=3.2
 # onnxruntime already pulled in by onnxruntime-gpu; list explicitly for CPU-only fallback
 onnxruntime>=1.18
 
-# ── Noise Reduction ────────────────────────────────────────────────────────
-deepfilternet>=0.5.6
+# ── Noise Reduction (optional) ─────────────────────────────────────────────
+# deepfilternet requires Rust to build from source on Windows.
+# The server falls back to passthrough (no-op) if it is not installed.
+# To install manually after setting up Rust (https://rustup.rs):
+#   pip install deepfilternet
 
 # ── Audio I/O ─────────────────────────────────────────────────────────────
 soundfile>=0.12
@@ -44,7 +47,7 @@ scipy>=1.13
 
 # ── Monitoring ─────────────────────────────────────────────────────────────
 prometheus-client>=0.20
-pynvml>=11.5
+nvidia-ml-py>=12.0
 
 # ── Testing ───────────────────────────────────────────────────────────────
 pytest>=8.2
