@@ -11,6 +11,28 @@ VENV_DIR="$REPO_ROOT/.venv"
 echo "==> Nepali Translator Setup"
 echo "    Repo: $REPO_ROOT"
 
+# ── 0. Redirect pip cache + tmp to the largest available partition ──────────
+# PyTorch wheels are ~2.5 GB; pip's cache + unpack temp can exceed user quotas
+# on the root partition. Use /mnt/media if it has more free space than /tmp.
+_root_free=$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')
+_media_free=0
+if mountpoint -q /mnt/media 2>/dev/null; then
+    _media_free=$(df --output=avail /mnt/media 2>/dev/null | tail -1 | tr -d ' ')
+fi
+
+if [ "${_media_free}" -gt "${_root_free}" ]; then
+    _pip_tmp="/mnt/media/.pip-tmp-$(id -un)"
+    mkdir -p "$_pip_tmp"
+    export PIP_CACHE_DIR="$_pip_tmp/cache"
+    export TMPDIR="$_pip_tmp/tmp"
+    mkdir -p "$PIP_CACHE_DIR" "$TMPDIR"
+    echo "    pip cache → $_pip_tmp (more space than /)"
+else
+    # Still avoid polluting ~/.cache with multi-GB wheels; use a local cache
+    export PIP_CACHE_DIR="$REPO_ROOT/.pip-cache"
+    mkdir -p "$PIP_CACHE_DIR"
+fi
+
 # ── 1. Detect distro and install system packages ───────────────────────────
 if command -v pacman &>/dev/null; then
     echo "==> Installing system packages (Arch Linux)"
@@ -70,11 +92,17 @@ case "$_cuda_major" in
 esac
 
 echo "==> Installing PyTorch (latest stable, index: $_pt_index)"
-pip install --quiet torch torchaudio --index-url "$_pt_index"
+pip install torch torchaudio --index-url "$_pt_index" || {
+    echo "    Retrying with --no-cache-dir (quota fallback)..."
+    pip install --no-cache-dir torch torchaudio --index-url "$_pt_index"
+}
 
 # ── 4. Python dependencies ─────────────────────────────────────────────────
 echo "==> Installing Python dependencies"
-pip install --quiet -r "$REPO_ROOT/server/requirements.txt"
+pip install -r "$REPO_ROOT/server/requirements.txt" || {
+    echo "    Retrying with --no-cache-dir (quota fallback)..."
+    pip install --no-cache-dir -r "$REPO_ROOT/server/requirements.txt"
+}
 
 # ── 5. Node.js / npm for the web client ────────────────────────────────────
 if command -v npm &>/dev/null; then
